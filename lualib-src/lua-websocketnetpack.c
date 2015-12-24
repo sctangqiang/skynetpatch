@@ -51,6 +51,41 @@ struct queue {
 	struct netpack queue[QUEUESIZE];
 };
 
+/*
+  打印二进制流(转换为十六进制字符串)
+*/
+static void print_bin(const char* pHead, const char *pBuffer, int iLength)
+{
+	FILE* fp = NULL;
+    int i;
+    char tmpBuffer[16384];
+    char strTemp[32];
+
+    if( iLength <= 0 || iLength > 4096 || pBuffer == NULL )
+    {
+        return;
+    }
+
+	fp = fopen("test.txt", "a");
+
+    tmpBuffer[0] = '\0';
+    for( i = 0; i < iLength; i++ )
+    {
+        if( !(i%16) )
+        {
+            sprintf(strTemp, "\n%04d>    ", i/16+1);
+            strcat(tmpBuffer, strTemp);
+        }
+        sprintf(strTemp, "%02X ", (unsigned char)pBuffer[i]);
+        strcat(tmpBuffer, strTemp);
+    }
+
+    strcat(tmpBuffer, "\n");
+    fprintf(fp, "%s Size:%d Hex:%s\n", pHead, iLength, tmpBuffer);
+    fclose(fp);    
+    return;
+}
+
 static void
 clear_list(struct uncomplete * uc) {
 	while (uc) {
@@ -157,6 +192,9 @@ push_data(lua_State *L, int fd, void *buffer, int size, int clone) {
 		memcpy(tmp, buffer, size);
 		buffer = tmp;
 	}
+
+	print_bin("push_data", buffer, size);
+
 	struct queue *q = get_queue(L);
 	struct netpack *np = &q->queue[q->tail];
 	if (++q->tail >= q->cap)
@@ -169,8 +207,7 @@ push_data(lua_State *L, int fd, void *buffer, int size, int clone) {
 	}
 }
 
-static struct uncomplete *
-save_uncomplete(lua_State *L, int fd) {
+static struct uncomplete * save_uncomplete(lua_State *L, int fd) {
 	struct queue *q = get_queue(L);
 	int h = hash_fd(fd);
 	struct uncomplete * uc = skynet_malloc(sizeof(struct uncomplete));
@@ -182,8 +219,7 @@ save_uncomplete(lua_State *L, int fd) {
 	return uc;
 }
 
-static uint64_t ntoh64(uint64_t host)
-{
+static uint64_t ntoh64(uint64_t host) {
     uint64_t ret = 0;
     uint32_t high, low;
     low = host & 0xFFFFFFFF;
@@ -201,21 +237,19 @@ static uint64_t ntoh64(uint64_t host)
 static inline int
 read_size(uint8_t * buffer, int size, int* pack_head_length, int* mask, int * ismask, int * hasunmask_size) {
 	
-	if (size < 2)
-	{
+	if (size < 2) {
 		return -1;
 	}
 	
-	//char fin = (buffer[0] >> 7) & 0x1;
+	char fin = (buffer[0] >> 7) & 0x1;
     char rsv1 = (buffer[0] >> 6) & 0x1;
     char rsv2 = (buffer[0] >> 5) & 0x1;
     char rsv3 = (buffer[0] >> 4) & 0x1;
-    //char opcode = buffer[0] & 0xf;
+    char opcode = buffer[0] & 0xf;
     char is_mask = (buffer[1] >> 7) & 0x1;
 
-
-    if (0x0 != rsv1 || 0x0 != rsv2 || 0x0 != rsv3)
-    {
+    printf("read_size2 fin=%d rsv1=%d rsv2=%d rsv3=%d opcode=%d is_mask=%d\n", fin, rsv1, rsv2, rsv3, opcode, is_mask);
+    if (0x0 != rsv1 || 0x0 != rsv2 || 0x0 != rsv3) {
         return -2;
     }
 
@@ -225,35 +259,27 @@ read_size(uint8_t * buffer, int size, int* pack_head_length, int* mask, int * is
     char length = buffer[1] & 0x7f;
     offset += WEBSOCKET_HEADER_LEN;
     //126
-    if (length < 0x7E)
-    {
+    if (length < 0x7E) {
         pack_size = length;
     }
     //Short
-    else if (0x7E == length)
-    {
-		if (size < WEBSOCKET_HEADER_LEN + sizeof(short))
-		{
+    else if (0x7E == length) {
+		if (size < WEBSOCKET_HEADER_LEN + sizeof(short)) {
 			return -1;
 		}
         pack_size = ntohs(*((uint16_t *) (buffer+WEBSOCKET_HEADER_LEN)));
         offset += sizeof(short);
     }
-    else
-    {
-		if (size < WEBSOCKET_HEADER_LEN + sizeof(int64_t))
-		{
+    else {
+		if (size < WEBSOCKET_HEADER_LEN + sizeof(int64_t)) {
 			return -1;
 		}
         pack_size = ntoh64(*((uint64_t *) (buffer+WEBSOCKET_HEADER_LEN)));
         offset += sizeof(int64_t);
     }
 	
-	
-    if (is_mask)
-    {
-        if (offset + WEBSOCKET_MASK_LEN > size)
-        {
+    if (is_mask) {
+        if (offset + WEBSOCKET_MASK_LEN > size) {
             return -1;
         }
 
@@ -262,18 +288,6 @@ read_size(uint8_t * buffer, int size, int* pack_head_length, int* mask, int * is
         char *masks = (char*)mask;
         memcpy(masks, (buffer + offset), WEBSOCKET_MASK_LEN);
         offset += WEBSOCKET_MASK_LEN;
-
-        int body_size = size - offset;
-        int unmask_size = (pack_size > body_size) ? body_size : pack_size;
-        if (unmask_size)
-        {
-            int i;
-            for (i = 0; i < unmask_size; i++)
-            {
-                buffer[i + offset] ^= masks[i % WEBSOCKET_MASK_LEN];
-            }
-            *hasunmask_size = unmask_size;
-        }
     }
 
 	*pack_head_length = offset;
@@ -348,6 +362,7 @@ push_more(lua_State *L, int fd, uint8_t *buffer, int size, int wsocket_handeshak
 	{
 		//认为socket初次建立连接读取握手协议
 		pack_size = get_http_header(buffer, size);			
+		printf("push_more wsocket_handeshake=%d buffersize=%d pack_size=%d\n", wsocket_handeshake, size, pack_size);
 	}
 	else
 	{
@@ -360,6 +375,8 @@ push_more(lua_State *L, int fd, uint8_t *buffer, int size, int wsocket_handeshak
 			buffer += WEBSOCKET_HEADER_LEN;
 			size -= WEBSOCKET_HEADER_LEN;
 		}
+		printf("push_more not wsocket_handeshake buffersize=%d pack_size=%d pack_head_length=%d mask=%d ismask=%d hasunmask_size=%d\n"
+			, size, pack_size, pack_head_length, mask, ismask, hasunmask_size);
 	}
 	
 	if (pack_size == -1)
@@ -382,10 +399,17 @@ push_more(lua_State *L, int fd, uint8_t *buffer, int size, int wsocket_handeshak
         uc->hasunmask_size = hasunmask_size;
 		uc->pack.size = pack_size;
 		uc->pack.buffer = skynet_malloc(pack_size);
-		memcpy(uc->pack.buffer, buffer, size);
+		decode_wsmask_data(buffer, uc->read, uc);
+		memcpy(uc->pack.buffer, buffer, uc->read);
 		return;
 	}
 
+	struct uncomplete uc;
+	memset(&uc, 0, sizeof(uc));
+	uc.mask = mask;
+	uc.ismask = ismask;
+	uc.hasunmask_size = hasunmask_size;
+	decode_wsmask_data(buffer, pack_size, &uc);
 	push_data(L, fd, buffer, pack_size, 1);
 
 	buffer += pack_size;
@@ -414,59 +438,73 @@ filter_data_(lua_State *L, int fd, uint8_t * buffer, int size, int wsocket_hande
     int mask = 0;
     int ismask = 0;
     int hasunmask_size = 0;
+    static int total_size = 0;
+
+    total_size += size;
+    print_bin("fileter", buffer, size);
+    printf("totalsize=%d filter_data size=%d wsocket_handeshake=%d\n", total_size, size, wsocket_handeshake);
+
 	if (uc) {
 		// fill uncomplete
 		if (uc->read < 0) {
+			printf("uc->read < 0: buffersize=%d wsocket_handeshake=%d uc.header_size=%d\n", size, wsocket_handeshake, uc->header_size);
 			// read size
-            int last_header_size = uc->header_size;
-			int copy_size = uc->header_size + size > HEADERSIZE ? (HEADERSIZE - uc->header_size) : size;
-			memcpy(uc->header+uc->header_size, buffer, copy_size);
-			uc->header_size += copy_size;
-
-			
-			if (wsocket_handeshake)
-			{
-				//认为socket初次建立连接读取握手协议
-				pack_size = get_http_header(uc->header, uc->header_size);			
-			}
-			else
-			{
-				//读取帧大小
-				while ((pack_size = read_size(uc->header, uc->header_size, &pack_head_length, &mask, &ismask, &hasunmask_size)) == -2)
-				{
-                    mask  = 0;
-                    ismask = 0;
-                    hasunmask_size = 0;
-					uc->header_size -= WEBSOCKET_HEADER_LEN;
-					memmove(uc->header, uc->header + WEBSOCKET_HEADER_LEN, uc->header_size);
+			int index = 0;
+			while (size > 0) {
+				uc->header[uc->header_size] = buffer[index];
+				index += 1;
+				uc->header_size += 1;
+				if (wsocket_handeshake) {
+					//认为socket初次建立连接读取握手协议
+					pack_size = get_http_header(uc->header, uc->header_size);			
 				}
-			}			
-			if (pack_size == -1)
-			{			
+				else {
+					//读取帧大小
+					while ((pack_size = read_size(uc->header, uc->header_size, &pack_head_length, &mask, &ismask, &hasunmask_size)) == -2) {
+	                    mask  = 0;
+	                    ismask = 0;
+	                    hasunmask_size = 0;
+						uc->header_size -= WEBSOCKET_HEADER_LEN;
+						memmove(uc->header, uc->header + WEBSOCKET_HEADER_LEN, uc->header_size);
+					}
+				}
+
+				if (pack_size >= 0 || index >= size) {
+					printf("uc->read < 0: pack_size=%d index=%d uc.header_size=%d mask=%d ismask=%d hasunmask_size=%d\n"
+						, pack_size, index, uc->header_size, mask, ismask, hasunmask_size);
+					size -= index;
+					buffer += index;
+					break;
+				} 
+			}
+			
+			if (pack_size == -1) {			
 				int h = hash_fd(fd);
 				uc->next = q->hash[h];
 				q->hash[h] = uc;
 				return 1;			
 			}
-			//去掉帧数据的包头
-			if (!wsocket_handeshake)
-			{
-			    uc->header_size -= pack_head_length;
-				if (uc->header_size != 0)
-                {
-                    memmove(uc->header, uc->header + pack_head_length, uc->header_size);				
-                }
-			}
 			
 			//取得包头长度以后开始生成新包
 			uc->pack.buffer = skynet_malloc(pack_size);
 			uc->pack.size = pack_size;
-			uc->read = uc->header_size < pack_size ? uc->header_size : pack_size;
-			memcpy(uc->pack.buffer, uc->header, uc->read);
-			uc->header_size -= uc->read;
-
-            buffer += (uc->read+pack_head_length - last_header_size);
-            size -= (uc->read+pack_head_length - last_header_size);
+			uc->mask = mask;
+            uc->ismask = ismask;
+            uc->hasunmask_size = hasunmask_size;
+            if (wsocket_handeshake) {
+				uc->read = uc->header_size < pack_size ? uc->header_size : pack_size;
+				memcpy(uc->pack.buffer, uc->header, uc->read);
+            } 
+            else {
+            	uc->read = 0;
+				/*
+				uc->read = size < pack_size ? size : pack_size;
+				decode_wsmask_data(buffer, uc->read, uc);
+				memcpy(uc->pack.buffer, buffer, uc->read);
+	            buffer += uc->read;
+	            size -= uc->read;
+	            */
+            }
 		}
 		int need = uc->pack.size - uc->read;
 		if (size < need) {
@@ -478,11 +516,9 @@ filter_data_(lua_State *L, int fd, uint8_t * buffer, int size, int wsocket_hande
 			q->hash[h] = uc;
 			return 1;
 		}
-		if (need != 0)
-		{
-            decode_wsmask_data(buffer, need, uc);
-			memcpy(uc->pack.buffer + uc->read, buffer, need);			
-		}
+
+        decode_wsmask_data(buffer, need, uc);
+		memcpy(uc->pack.buffer + uc->read, buffer, need);			
 		
 		buffer += need;
 		size -= need;
@@ -492,6 +528,7 @@ filter_data_(lua_State *L, int fd, uint8_t * buffer, int size, int wsocket_hande
 			lua_pushinteger(L, fd);
 			lua_pushlightuserdata(L, uc->pack.buffer);
 			lua_pushinteger(L, uc->pack.size);
+			print_bin("push_data", uc->pack.buffer, uc->pack.size);
 			skynet_free(uc);
 			return 5;
 		}
@@ -502,31 +539,28 @@ filter_data_(lua_State *L, int fd, uint8_t * buffer, int size, int wsocket_hande
 		lua_pushvalue(L, lua_upvalueindex(TYPE_MORE));
 		return 2;
 	} else {
-		if (wsocket_handeshake)
-		{
+		if (wsocket_handeshake) {
 			//认为socket初次建立连接读取握手协议
-			pack_size = get_http_header(buffer, size);			
+			pack_size = get_http_header(buffer, size);
+			printf("fileter wsocket_handeshake buffersize=%d pack_size=%d\n", size, pack_size);
+			printf("buffer:%s\n", buffer);			
 		}
-		else
-		{
+		else {
 			//读取帧大小
-			while ((pack_size = read_size(buffer, size, &pack_head_length, &mask, &ismask, &hasunmask_size)) == -2)
-			{
+			while ((pack_size = read_size(buffer, size, &pack_head_length, &mask, &ismask, &hasunmask_size)) == -2) {
                 mask = 0;
                 ismask = 0;
                 hasunmask_size = 0;
 				buffer += WEBSOCKET_HEADER_LEN;
 				size -= WEBSOCKET_HEADER_LEN;
 			}
+			printf("fileter not_handeshake buffersize=%d pack_size=%d pack_head_length=%d mask=%d ismask=%d hasunmask_size=%d\n"
+				, size, pack_size, pack_head_length, mask, ismask, hasunmask_size);
 		}
 		
-		if (pack_size == -1)
-		{		
+		if (pack_size == -1) {		
 			struct uncomplete * uc = save_uncomplete(L, fd);
 			uc->read = -1;
-            uc->mask = mask;
-            uc->ismask = ismask;
-            uc->hasunmask_size = hasunmask_size;
 			uc->header_size += size;
 			memcpy(uc->header, buffer, size);
 			return 1;			
@@ -540,22 +574,32 @@ filter_data_(lua_State *L, int fd, uint8_t * buffer, int size, int wsocket_hande
             uc->mask = mask;
             uc->ismask = ismask;
             uc->hasunmask_size = hasunmask_size;
-			uc->pack.size = pack_size;
+			uc->pack.size = pack_size;			
 			uc->pack.buffer = skynet_malloc(pack_size);
+			decode_wsmask_data(buffer, size, uc);
 			memcpy(uc->pack.buffer, buffer, size);
 			return 1;
 		}
-		if (size == pack_size) {
+
+		struct uncomplete uc;
+		memset(&uc, 0, sizeof(uc));
+		uc.mask = mask;
+		uc.ismask = ismask;
+		uc.hasunmask_size = hasunmask_size;
+		if (size == pack_size) {			
 			// just one package
 			lua_pushvalue(L, lua_upvalueindex(TYPE_DATA));
 			lua_pushinteger(L, fd);
 			void * result = skynet_malloc(pack_size);
+			decode_wsmask_data(buffer, size, &uc);			
 			memcpy(result, buffer, size);
+			print_bin("push_data", buffer, size);
 			lua_pushlightuserdata(L, result);
 			lua_pushinteger(L, size);
 			return 5;
 		}
 		// more data
+		decode_wsmask_data(buffer, pack_size, &uc);
 		push_data(L, fd, buffer, pack_size, 1);
 		buffer += pack_size;
 		size -= pack_size;
@@ -662,6 +706,7 @@ lpop(lua_State *L) {
 	if (++q->head >= q->cap) {
 		q->head = 0;
 	}
+
 	lua_pushinteger(L, np->id);
 	lua_pushlightuserdata(L, np->buffer);
 	lua_pushinteger(L, np->size);
