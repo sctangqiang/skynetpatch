@@ -234,7 +234,7 @@ static uint64_t ntoh64(uint64_t host) {
     return ret;
 }
 /*
-* @return -1表示包头长不够 -2表示包前两个字节无效逻辑需要扔掉
+* @return -1表示包头长不够 -2表示包前两个字节无效逻辑需要扔掉 -3表示是客户端浏览器关闭
 */
 static inline int
 read_size(uint8_t * buffer, int size, int* pack_head_length, int* mask, int * ismask, int * hasunmask_size) {
@@ -257,6 +257,10 @@ read_size(uint8_t * buffer, int size, int* pack_head_length, int* mask, int * is
 
     if (fin == 0 || opcode == 0) {
     	return -2;
+    }
+    
+    if (opcode == 8){
+	return -3;
     }
 
     int offset = 0;
@@ -514,6 +518,12 @@ filter_data_(lua_State *L, int fd, uint8_t * buffer, int size, int wsocket_hande
 				q->hash[h] = uc;
 				return 1;			
 			}
+			else if (pack_size == -3) {
+				close_uncomplete(L, fd);
+				lua_pushvalue(L, lua_upvalueindex(TYPE_CLOSE));
+				lua_pushinteger(L, fd);
+				return 3;
+			}
 			
 			//取得包头长度以后开始生成新包
 			uc->pack.buffer = skynet_malloc(pack_size);
@@ -603,6 +613,12 @@ filter_data_(lua_State *L, int fd, uint8_t * buffer, int size, int wsocket_hande
 				memcpy(uc->header, buffer, size);				
 			}
 			return 1;			
+		}
+		else if (pack_size == -3) {
+			close_uncomplete(L, fd);
+			lua_pushvalue(L, lua_upvalueindex(TYPE_CLOSE));
+			lua_pushinteger(L, fd);
+			return 3;
 		}
 		buffer+=pack_head_length;
 		size-=pack_head_length;
