@@ -7,6 +7,8 @@ local string = require "string"
 local crypt = require "crypt"
 local gateserver = {}
 
+local max_packsize = 10*1024
+local max_headersize = 1024
 local socket	-- listen socket
 local queue		-- message queue
 local maxclient	-- max client
@@ -115,6 +117,7 @@ end
 function gateserver.closeclient(fd)
 	local c = connection[fd]
 	if c then
+		client_number = client_number - 1
 		connection[fd] = nil
 		socketdriver.close(fd)
 	end
@@ -163,14 +166,25 @@ function gateserver.start(handler)
 		if connection[fd] ~= nil and connection[fd].isconnect then
 			if connection[fd].iswebsocket_handeshake == 1 then
 				--websocket 握手回包处理
+				if sz >= max_headersize then
+					gateserver.closeclient(fd)
+					return
+				end
+
 				local str_msg = netpack.tostring(msg, sz)
 				local header = parse_httpheader(str_msg)
 				if (gateserver.checkwebsocket(fd, header)) then
 					connection[fd].iswebsocket_handeshake = 0
-				end								
-			else
-				handler.message(fd, msg, sz)
+				end
+				return								
 			end
+
+			if sz >= max_packsize then				
+				gateserver.closeclient(fd)
+				return
+			end
+			
+			handler.message(fd, msg, sz)			
 		else
 			skynet.error(string.format("Drop message from fd (%d) : %s", fd, netpack.tostring(msg,sz)))
 		end

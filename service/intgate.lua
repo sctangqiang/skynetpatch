@@ -1,6 +1,6 @@
 local skynet = require "skynet"
-local gateserver = require "snax.wsgateserver"
---local netpack = require "websocketnetpack"
+local gateserver = require "snax.intgateserver"
+local netpack = require "intnetpack"
 
 local watchdog
 local connection = {}	-- fd -> connection : { fd , client, agent , ip, mode }
