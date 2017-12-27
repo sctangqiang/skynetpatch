@@ -1,6 +1,6 @@
 local skynet = require "skynet"
 local netpack = require "intnetpack"
-local socketdriver = require "socketdriver"
+local socketdriver = require "skynet.socketdriver"
 
 local gateserver = {}
 local smallstring = 8192
