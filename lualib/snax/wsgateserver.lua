@@ -1,10 +1,10 @@
 local skynet = require "skynet"
 local netpack = require "websocketnetpack"
-local socketdriver = require "socketdriver"
+local socketdriver = require "skynet.socketdriver"
 local httpd = require "http.httpd"
 local urllib = require "http.url"
 local string = require "string"
-local crypt = require "crypt"
+local crypt = require "skynet.crypt"
 local gateserver = {}
 
 local max_packsize = 10*1024
