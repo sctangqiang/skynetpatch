@@ -253,6 +253,10 @@ read_size(uint8_t * buffer, int size, int* pack_head_length, int* mask, int * is
     //printf("read_size2 fin=%d rsv1=%d rsv2=%d rsv3=%d opcode=%d is_mask=%d\n", fin, rsv1, rsv2, rsv3, opcode, is_mask);
     if (0x0 != rsv1 || 0x0 != rsv2 || 0x0 != rsv3) {
         return -2;
+    }    
+    //opcode == 0x8 表示主动关闭，所以放弃本次读取
+    if(opcode == 0x8){
+        return -1;
     }
 
     if (fin == 0 || opcode == 0) {
